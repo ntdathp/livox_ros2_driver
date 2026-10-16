@@ -550,7 +550,7 @@ static void PointCloudConvert(LivoxPoint *p_dpoint, LivoxRawPoint *p_raw_point) 
 
 /* Member function --------------------------------------------------------- */
 Lds::Lds(uint32_t buffer_time_ms, uint8_t data_src) : \
-    lidar_count_(kMaxSourceLidar), semaphore_(0), \
+    lidar_count_(kMaxSourceLidar), semaphore_(0), imu_semaphore_(0), \
     buffer_time_ms_(buffer_time_ms), data_src_(data_src), request_exit_(false) {
     ResetLds(data_src_);
 }
@@ -706,6 +706,10 @@ void Lds::StorageRawPacket(uint8_t handle, LivoxEthPacket* eth_packet) {
           GetEthPacketLen(eth_packet->data_type),
           packet_statistic->imu_timebase,
           GetPointsPerPacket(eth_packet->data_type));
+      // Wake the IMU worker immediately (independent of LiDAR 10 Hz).
+      if (imu_semaphore_.GetCount() <= 0) {
+        imu_semaphore_.Signal();
+      }
     }
   }
 }

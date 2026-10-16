@@ -406,6 +406,7 @@ class Semaphore {
   }
 
   int GetCount() {
+    std::unique_lock<std::mutex> lock(mutex_);
     return count_;
   }
 
@@ -439,6 +440,7 @@ class Lds {
   uint8_t lidar_count_;                 /**< Lidar access handle. */
   LidarDevice lidars_[kMaxSourceLidar]; /**< The index is the handle */
   Semaphore semaphore_;
+  Semaphore imu_semaphore_;
 
  protected:
   uint32_t buffer_time_ms_; /**< Buffer time before data in queue is read */

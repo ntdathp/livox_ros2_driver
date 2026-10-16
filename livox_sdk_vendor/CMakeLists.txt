@@ -7,6 +7,8 @@ find_package(ament_cmake REQUIRED)
 macro(build_livox_sdk)
   set(livox_sdk_REV "v2.3.1")
   set(extra_cmake_args)
+  # Legacy SDK warnings must not become errors with newer GCC.
+  set(livox_sdk_cxx_flags "${CMAKE_CXX_FLAGS} -Wno-error=c++20-compat -Wno-c++20-compat")
 
   get_property(multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
   if(NOT multi_config AND DEFINED CMAKE_BUILD_TYPE)
@@ -20,6 +22,8 @@ macro(build_livox_sdk)
     GIT_SHALLOW OFF
     TIMEOUT 60
     CMAKE_ARGS
+      -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      "-DCMAKE_CXX_FLAGS=${livox_sdk_cxx_flags}"
       -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/livox-sdk_install
       -DCMAKE_POSITION_INDEPENDENT_CODE=ON
       ${extra_cmake_args}
