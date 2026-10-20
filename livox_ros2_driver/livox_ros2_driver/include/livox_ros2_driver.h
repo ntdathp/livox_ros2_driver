@@ -44,6 +44,10 @@
 #include "rclcpp/rclcpp.hpp"
 
 #include "lddc.h"
+#include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/string.hpp"
+#include "std_msgs/msg/u_int64.hpp"
+#include "std_msgs/msg/u_int64_multi_array.hpp"
 
 namespace livox_ros
 {
@@ -60,6 +64,12 @@ private:
   void pollThread();
   void imuThread();
 
+  rclcpp::Subscription<std_msgs::msg::UInt64MultiArray>::SharedPtr esp_utc_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr esp_run_sub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr esp_ready_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt64>::SharedPtr esp_ack_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr esp_status_pub_;
+  rclcpp::TimerBase::SharedPtr esp_status_timer_;
   std::unique_ptr<Lddc> lddc_ptr_;
   std::shared_ptr<std::thread> poll_thread_;
   std::shared_ptr<std::thread> imu_thread_;

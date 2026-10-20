@@ -1,0 +1,392 @@
+--- /dev/null
++++ b/README_HORIZON_SYNC.md
+@@ -0,0 +1,107 @@
++# Khôi phục sync ESP32 cho Livox Horizon — ROS 2 Jazzy
++
++Driver có lại bridge UTC dùng cùng tiến trình Livox SDK với driver LiDAR.
++Giao thức tương thích node `horizon_flir_sync/sync_camera` đã dùng với bộ
++Horizon + ESP32 + FLIR. Package camera/firmware ESP32 thuộc `horizon_flir_sync`
++và cần có sẵn trong workspace hoặc môi trường đã source.
++
++## Cài vào workspace đang dùng
++
++Giải nén ZIP vào thư mục tạm, rồi áp patch vào repo hiện có. Với repo laptop
++ở `~/my_ws/data_ws/src/livox_ros2_driver`:
++
++```bash
++unzip -o ~/Downloads/livox_ros2_driver_repo_sync.zip -d /tmp/horizon_driver_sync
++cd ~/my_ws/data_ws/src/livox_ros2_driver
++patch --dry-run -p1 < /tmp/horizon_driver_sync/livox_ros2_driver_repo/restore_horizon_sync.patch
++```
++
++Nếu dry-run không báo lỗi, áp patch một lần:
++
++```bash
++patch -p1 < /tmp/horizon_driver_sync/livox_ros2_driver_repo/restore_horizon_sync.patch
++```
++
++Với desktop, đổi đường dẫn repo thành `~/my_ws/fastlio_ws/src/livox_ros2_driver_repo`.
++Patch được tạo theo đúng ZIP bạn gửi. Nếu file nguồn đã thay đổi khác bản ZIP,
++dừng ở kết quả dry-run để đối chiếu, không ép áp patch hay ghi đè `.rej`.
++
++Gói cũng chứa toàn bộ source đã sửa và không mang thư mục `.git`. Có thể chép
++nội dung vào repo tương ứng, nhưng không giải nén thêm repo trùng package vào
++`src` cạnh repo đang dùng.
++
++Repo giữ nguyên message LiDAR `livox_ros_driver2/msg/CustomMsg` như bản bạn gửi.
++Package message `livox_ros_driver2` cần có trong workspace hoặc underlay đã source.
++Thư mục `livox_interfaces` trong repo gốc được giữ nguyên, không đổi loại message.
++
++```bash
++cd ~/my_ws/data_ws
++source /opt/ros/jazzy/setup.bash
++colcon build --symlink-install --packages-up-to livox_ros2_driver
++source install/setup.bash
++```
++
++Nếu dùng workspace desktop, thay `~/my_ws/data_ws` bằng `~/my_ws/fastlio_ws`.
++Môi trường chạy node camera phải có PySpin và thư viện Spinnaker như trước.
++
++## Chạy đồng bộ cả LiDAR và camera
++
++Với package `horizon_flir_sync` đã cài, dùng launch chung như trước:
++
++```bash
++ros2 launch horizon_flir_sync hardware_sync.launch.py \
++  camera_serial:=25465415 \
++  serial_port:=/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
++```
++
++Launch chung phải truyền `esp_sync_enabled: true` vào node `livox_ros2_driver`.
++Launch chung cũ đã có tham số này. Chỉ chạy một tiến trình driver LiDAR tại một thời điểm.
++
++## Chạy riêng driver để kiểm tra bridge
++
++```bash
++ros2 launch livox_ros2_driver livox_horizon_jazzy.launch.py \
++  esp_sync_enabled:=true
++```
++
++Mặc định tham số là `false` để chạy LiDAR độc lập như cũ. Khi đặt `true`,
++`/sync/livox_ready` có thể báo sẵn sàng sau khi nhận gói từ Horizon, nhưng
++LiDAR/IMU chỉ được xuất sau khi node sync gửi RUN, UTC hợp lệ và qua thời gian
++khởi động đồng bộ. Chạy riêng driver chưa tạo xung ESP32 hay kích camera.
++
++## Các topic được khôi phục
++
++| Topic | Kiểu | Vai trò |
++| --- | --- | --- |
++| `/sync/livox_ready` | `std_msgs/msg/Bool` | Driver đã nhận gói Horizon gần đây, chỉ một thiết bị |
++| `/sync/livox_status` | `std_msgs/msg/String` | `timestamp_type`, số gói accepted/rejected, multiple_devices |
++| `/sync/utc_ack` | `std_msgs/msg/UInt64` | Epoch ns mà SDK đã xác nhận lệnh UTC |
++| `/sync/utc` | `std_msgs/msg/UInt64MultiArray` | Nhận `[epoch_ns, sent_monotonic_ns, pps_monotonic_ns]` từ node sync |
++| `/sync/run` | `std_msgs/msg/Bool` | Nhận trạng thái phiên chạy, QoS transient-local |
++
++`/sync/status` và `/sync/frame_metadata` được publish bởi node camera/sync,
++không phải driver LiDAR.
++
++```bash
++ros2 param get /livox_horizon esp_sync_enabled
++ros2 topic echo /sync/livox_ready --once
++ros2 topic echo /sync/livox_status --once
++ros2 topic echo /sync/utc_ack --once
++```
++
++Sau khi launch chung đã RUNNING và qua khởi động, kỳ vọng `timestamp_type=3`,
++`accepted` tăng, `multiple_devices=0`, `utc_ack` là epoch ns hiện tại.
++
++File `config/livox_horizon_jazzy.json` giữ `timesync_config.enable_timesync=false`:
++bridge ESP nhận UTC qua ROS, không dùng bộ timesync UART/GPS cũ của SDK song song.
++
++## Phạm vi thay đổi và kiểm tra
++
++- Khôi phục `esp_sync.h`, publisher/subscriber/timer và cổng kiểm tra gói LiDAR/IMU.
++- Đặt con trỏ callback trước khi SDK bắt đầu luồng nhận; khởi tạo trạng thái timesync.
++- Thêm launch argument `esp_sync_enabled` với kiểu bool rõ ràng.
++- Giữ các thay đổi sẵn có của bản gửi: UTC qua `timegm`, CustomMsg và dừng worker.
++
++Đã kiểm tra logic UTC/gating bằng chương trình C++ dùng header SDK với SDK I/O mô phỏng,
++cả hai cách viết trường `microsecond`/`mircrosecond`. Chưa build toàn bộ ROS 2 hay
++kiểm thử cảm biến tại môi trường tạo gói vì không có ROS 2/thiết bị tại đó.
+--- a/livox_ros2_driver/launch/livox_horizon_jazzy.launch.py
++++ b/livox_ros2_driver/launch/livox_horizon_jazzy.launch.py
+@@ -10,6 +10,7 @@
+ from launch.actions import DeclareLaunchArgument
+ from launch.substitutions import LaunchConfiguration
+ from launch_ros.actions import Node
++from launch_ros.parameter_descriptions import ParameterValue
+ 
+ 
+ def generate_launch_description():
+@@ -18,12 +19,18 @@
+     return LaunchDescription([
+         DeclareLaunchArgument("user_config_path", default_value=default_config),
+         DeclareLaunchArgument("frame_id", default_value="livox_frame"),
++        DeclareLaunchArgument(
++            "esp_sync_enabled", default_value="false",
++            description="Enable the horizon_flir_sync ESP32/UTC bridge",
++        ),
+         Node(
+             package="livox_ros2_driver",
+             executable="livox_ros2_driver_node",
+             name="livox_horizon",
+             output="screen",
+             parameters=[{
++                "esp_sync_enabled": ParameterValue(
++                    LaunchConfiguration("esp_sync_enabled"), value_type=bool),
+                 "xfer_format": 1,       # CustomMsg with per-point offset_time (ns)
+                 "multi_topic": 0,
+                 "data_src": 0,
+--- /dev/null
++++ b/livox_ros2_driver/livox_ros2_driver/esp_sync.h
+@@ -0,0 +1,100 @@
++// ESP32/PC UTC bridge for ONE legacy Livox Horizon. Local integration, 2026.
++// No second SDK process is created. UTC is an epoch label for the last PPS.
++#pragma once
++#include <atomic>
++#include <cstdint>
++#include <ctime>
++#include <memory>
++#include "livox_sdk.h"
++
++namespace livox_ros {
++// Legacy SDK releases differ in the spelling of this wire-compatible field.
++template <typename Request>
++auto SetUtcMicroseconds(Request &req, uint32_t value, int)
++    -> decltype(req.microsecond = value, void()) { req.microsecond = value; }
++template <typename Request>
++auto SetUtcMicroseconds(Request &req, uint32_t value, long)
++    -> decltype(req.mircrosecond = value, void()) { req.mircrosecond = value; }
++
++inline int64_t EspMonoNs() {
++  timespec ts{};
++  clock_gettime(CLOCK_MONOTONIC, &ts);
++  return int64_t(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
++}
++
++class EspSync {
++ public:
++  static EspSync &Get() { static EspSync value; return value; }
++  std::atomic<bool> enabled{false}, running{false};
++  std::atomic<int> handle{-1}, last_type{-1};
++  std::atomic<bool> multiple{false};
++  std::atomic<int64_t> last_packet{0}, last_command{0}, last_ack{0};
++  std::atomic<uint64_t> pps_epoch{0}, ack_epoch{0}, first_epoch{0};
++  std::atomic<uint64_t> accepted{0}, rejected{0};
++
++  void Observe(uint8_t device_handle, uint8_t device_type, uint8_t timestamp_type) {
++    if (!enabled || device_type != kDeviceTypeLidarHorizon) return;
++    int expected = -1;
++    handle.compare_exchange_strong(expected, int(device_handle));
++    if (handle != int(device_handle)) { multiple = true; return; }
++    last_type = timestamp_type;
++    last_packet = EspMonoNs();
++  }
++
++  bool Ready() const {
++    return handle >= 0 && !multiple && EspMonoNs() - last_packet < 1000000000LL;
++  }
++
++  bool Accept(uint8_t device_handle, uint8_t type, uint64_t stamp) {
++    if (!enabled) return true;
++    const int64_t now = EspMonoNs();
++    const uint64_t epoch = pps_epoch.load();
++    const uint64_t first = first_epoch.load();
++    const int64_t delta = int64_t(stamp) - int64_t(epoch);
++    const bool valid = running && !multiple && handle == int(device_handle)
++        && type == kTimestampTypePpsGps && first && epoch >= first + 2000000000ULL
++        && ack_epoch >= first && now - last_ack < 1500000000LL
++        && now - last_command < 1500000000LL
++        && delta >= -150000000LL && delta < 1500000000LL;
++    if (valid) ++accepted; else ++rejected;
++    return valid;
++  }
++
++  struct Request { uint64_t epoch; };
++  static void UtcAck(livox_status status, uint8_t, uint8_t response, void *data) {
++    std::unique_ptr<Request> request(static_cast<Request *>(data));
++    if (status == kStatusSuccess && response == 0) {
++      Get().ack_epoch = request->epoch;
++      Get().last_ack = EspMonoNs();
++    }
++  }
++
++  // Python monotonic_ns() and CLOCK_MONOTONIC share the PC's monotonic clock.
++  // Reject queued DDS commands so an old epoch cannot label the next PPS.
++  int SetUtc(uint64_t epoch_ns, int64_t sent_mono, int64_t edge_mono) {
++    const int64_t now = EspMonoNs();
++    if (!enabled || !running || !Ready()) return -100;
++    if (now < sent_mono || now - sent_mono > 100000000LL
++        || now - edge_mono < 10000000LL || now - edge_mono > 450000000LL
++        || epoch_ns % 1000000000ULL != 0) return -101;
++    if (pps_epoch && epoch_ns != pps_epoch + 1000000000ULL) return -102;
++    const time_t seconds = epoch_ns / 1000000000ULL;
++    tm utc{};
++    if (!gmtime_r(&seconds, &utc) || utc.tm_year < 100 || utc.tm_year > 355) return -103;
++    LidarSetUtcSyncTimeRequest req{};
++    req.year = utc.tm_year - 100;
++    req.month = utc.tm_mon + 1;
++    req.day = utc.tm_mday;
++    req.hour = utc.tm_hour;
++    SetUtcMicroseconds(req, uint32_t((utc.tm_min * 60 + utc.tm_sec) * 1000000ULL), 0);
++    // Record the command before SDK dispatch; the callback can be asynchronous.
++    if (!first_epoch) first_epoch = epoch_ns;
++    pps_epoch = epoch_ns;
++    last_command = now;
++    auto *context = new Request{epoch_ns};
++    const int status = LidarSetUtcSyncTime(uint8_t(handle.load()), &req, UtcAck, context);
++    if (status != kStatusSuccess) delete context;
++    return status;
++  }
++};
++}  // namespace livox_ros
+--- a/livox_ros2_driver/livox_ros2_driver/include/livox_ros2_driver.h
++++ b/livox_ros2_driver/livox_ros2_driver/include/livox_ros2_driver.h
+@@ -44,6 +44,10 @@
+ #include "rclcpp/rclcpp.hpp"
+ 
+ #include "lddc.h"
++#include "std_msgs/msg/bool.hpp"
++#include "std_msgs/msg/string.hpp"
++#include "std_msgs/msg/u_int64.hpp"
++#include "std_msgs/msg/u_int64_multi_array.hpp"
+ 
+ namespace livox_ros
+ {
+@@ -60,6 +64,12 @@
+   void pollThread();
+   void imuThread();
+ 
++  rclcpp::Subscription<std_msgs::msg::UInt64MultiArray>::SharedPtr esp_utc_sub_;
++  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr esp_run_sub_;
++  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr esp_ready_pub_;
++  rclcpp::Publisher<std_msgs::msg::UInt64>::SharedPtr esp_ack_pub_;
++  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr esp_status_pub_;
++  rclcpp::TimerBase::SharedPtr esp_status_timer_;
+   std::unique_ptr<Lddc> lddc_ptr_;
+   std::shared_ptr<std::thread> poll_thread_;
+   std::shared_ptr<std::thread> imu_thread_;
+--- a/livox_ros2_driver/livox_ros2_driver/lds.cpp
++++ b/livox_ros2_driver/livox_ros2_driver/lds.cpp
+@@ -23,6 +23,7 @@
+ //
+ 
+ #include "lds.h"
++#include "esp_sync.h"
+ 
+ #include <math.h>
+ #include <stdio.h>
+@@ -643,6 +644,7 @@
+   memcpy(cur_timestamp.stamp_bytes, eth_packet->timestamp,
+          sizeof(cur_timestamp));
+   timestamp = RawLdsStampToNs(cur_timestamp, eth_packet->timestamp_type);
++  if (!EspSync::Get().Accept(handle, eth_packet->timestamp_type, timestamp)) return;
+   if (timestamp >= kRosTimeMax) {
+     printf("Raw EthPacket time out of range Lidar[%d]\n", handle);
+     return;
+--- a/livox_ros2_driver/livox_ros2_driver/lds_lidar.cpp
++++ b/livox_ros2_driver/livox_ros2_driver/lds_lidar.cpp
+@@ -23,6 +23,7 @@
+ //
+ 
+ #include "lds_lidar.h"
++#include "esp_sync.h"
+ 
+ #include <stdio.h>
+ #include <string.h>
+@@ -46,6 +47,8 @@
+ 
+ /** Lds lidar function -------------------------------------------------------*/
+ LdsLidar::LdsLidar(uint32_t interval_ms) : Lds(interval_ms, kSourceRawLidar) {
++  enable_timesync_ = false;
++  timesync_ = nullptr;
+   auto_connect_mode_ = true;
+   is_initialized_ = false;
+ 
+@@ -88,6 +91,11 @@
+   }
+ 
+   ParseConfigFile(user_config_path);
++  if (EspSync::Get().enabled && enable_timesync_) {
++    printf("ESP bridge requires timesync_config.enable_timesync=false\n");
++    Uninit();
++    return -1;
++  }
+ 
+   if (whitelist_count_) {
+     DisableAutoConnectMode();
+@@ -119,6 +127,9 @@
+     timesync_->StartTimesync();
+   }
+ 
++  // Set callback target before SDK worker threads can run.
++  g_lds_ldiar = this;
++
+   /** Start livox sdk to receive lidar data */
+   if (!Start()) {
+     Uninit();
+@@ -168,6 +179,8 @@
+     return;
+   }
+ 
++  EspSync::Get().Observe(handle, lds_lidar->lidars_[handle].info.type,
++                         eth_packet->timestamp_type);
+   lds_lidar->StorageRawPacket(handle, eth_packet);
+ }
+ 
+--- a/livox_ros2_driver/livox_ros2_driver/livox_ros2_driver.cpp
++++ b/livox_ros2_driver/livox_ros2_driver/livox_ros2_driver.cpp
+@@ -26,6 +26,7 @@
+ #include <csignal>
+ #include <future>
+ #include <memory>
++#include <stdexcept>
+ #include <thread>
+ #include <vector>
+ 
+@@ -40,6 +41,7 @@
+ #include "lddc.h"
+ #include "lds_hub.h"
+ #include "lds_lidar.h"
++#include "esp_sync.h"
+ #include "lds_lvx.h"
+ #include "livox_sdk.h"
+ #include "livox_ros_driver2/msg/custom_point.hpp"
+@@ -109,6 +111,37 @@
+     publish_freq = publish_freq;
+   }
+ 
++  const bool esp_sync_enabled = this->declare_parameter("esp_sync_enabled", false);
++  EspSync::Get().enabled = esp_sync_enabled;
++  if (esp_sync_enabled) {
++    if (data_src != kSourceRawLidar) throw std::runtime_error("ESP sync requires raw lidar");
++    esp_ready_pub_ = this->create_publisher<std_msgs::msg::Bool>("/sync/livox_ready", 10);
++    esp_ack_pub_ = this->create_publisher<std_msgs::msg::UInt64>("/sync/utc_ack", 10);
++    esp_status_pub_ = this->create_publisher<std_msgs::msg::String>("/sync/livox_status", 10);
++    esp_run_sub_ = this->create_subscription<std_msgs::msg::Bool>(
++        "/sync/run", rclcpp::QoS(1).transient_local(),
++        [](const std_msgs::msg::Bool::SharedPtr msg) { EspSync::Get().running = msg->data; });
++    esp_utc_sub_ = this->create_subscription<std_msgs::msg::UInt64MultiArray>(
++        "/sync/utc", rclcpp::QoS(1),
++        [this](const std_msgs::msg::UInt64MultiArray::SharedPtr msg) {
++          if (msg->data.size() != 3) return;
++          const int status = EspSync::Get().SetUtc(msg->data[0], msg->data[1], msg->data[2]);
++          if (status != kStatusSuccess)
++            RCLCPP_ERROR(this->get_logger(), "ESP UTC update rejected: %d", status);
++        });
++    esp_status_timer_ = this->create_wall_timer(std::chrono::milliseconds(200), [this]() {
++      auto &state = EspSync::Get();
++      std_msgs::msg::Bool ready; ready.data = state.Ready(); esp_ready_pub_->publish(ready);
++      std_msgs::msg::UInt64 ack; ack.data = state.ack_epoch; esp_ack_pub_->publish(ack);
++      std_msgs::msg::String status;
++      status.data = "timestamp_type=" + std::to_string(state.last_type.load())
++          + " accepted=" + std::to_string(state.accepted.load())
++          + " rejected=" + std::to_string(state.rejected.load())
++          + " multiple_devices=" + std::to_string(state.multiple.load());
++      esp_status_pub_->publish(status);
++    });
++  }
++
+   future_ = exit_signal_.get_future();
+ 
+   /** Lidar data distribute control and lidar data source set */

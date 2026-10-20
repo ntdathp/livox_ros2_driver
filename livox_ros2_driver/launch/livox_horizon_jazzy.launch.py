@@ -10,6 +10,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -18,12 +19,18 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("user_config_path", default_value=default_config),
         DeclareLaunchArgument("frame_id", default_value="livox_frame"),
+        DeclareLaunchArgument(
+            "esp_sync_enabled", default_value="false",
+            description="Enable the horizon_flir_sync ESP32/UTC bridge",
+        ),
         Node(
             package="livox_ros2_driver",
             executable="livox_ros2_driver_node",
             name="livox_horizon",
             output="screen",
             parameters=[{
+                "esp_sync_enabled": ParameterValue(
+                    LaunchConfiguration("esp_sync_enabled"), value_type=bool),
                 "xfer_format": 1,       # CustomMsg with per-point offset_time (ns)
                 "multi_topic": 0,
                 "data_src": 0,

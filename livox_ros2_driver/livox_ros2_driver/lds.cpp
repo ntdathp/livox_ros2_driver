@@ -23,6 +23,7 @@
 //
 
 #include "lds.h"
+#include "esp_sync.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -643,6 +644,7 @@ void Lds::StorageRawPacket(uint8_t handle, LivoxEthPacket* eth_packet) {
   memcpy(cur_timestamp.stamp_bytes, eth_packet->timestamp,
          sizeof(cur_timestamp));
   timestamp = RawLdsStampToNs(cur_timestamp, eth_packet->timestamp_type);
+  if (!EspSync::Get().Accept(handle, eth_packet->timestamp_type, timestamp)) return;
   if (timestamp >= kRosTimeMax) {
     printf("Raw EthPacket time out of range Lidar[%d]\n", handle);
     return;

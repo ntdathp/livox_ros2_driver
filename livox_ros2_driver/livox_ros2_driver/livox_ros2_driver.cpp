@@ -26,6 +26,7 @@
 #include <csignal>
 #include <future>
 #include <memory>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -40,6 +41,7 @@
 #include "lddc.h"
 #include "lds_hub.h"
 #include "lds_lidar.h"
+#include "esp_sync.h"
 #include "lds_lvx.h"
 #include "livox_sdk.h"
 #include "livox_ros_driver2/msg/custom_point.hpp"
@@ -107,6 +109,37 @@ LivoxDriver::LivoxDriver(const rclcpp::NodeOptions & node_options)
     publish_freq = 0.1;
   } else {
     publish_freq = publish_freq;
+  }
+
+  const bool esp_sync_enabled = this->declare_parameter("esp_sync_enabled", false);
+  EspSync::Get().enabled = esp_sync_enabled;
+  if (esp_sync_enabled) {
+    if (data_src != kSourceRawLidar) throw std::runtime_error("ESP sync requires raw lidar");
+    esp_ready_pub_ = this->create_publisher<std_msgs::msg::Bool>("/sync/livox_ready", 10);
+    esp_ack_pub_ = this->create_publisher<std_msgs::msg::UInt64>("/sync/utc_ack", 10);
+    esp_status_pub_ = this->create_publisher<std_msgs::msg::String>("/sync/livox_status", 10);
+    esp_run_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+        "/sync/run", rclcpp::QoS(1).transient_local(),
+        [](const std_msgs::msg::Bool::SharedPtr msg) { EspSync::Get().running = msg->data; });
+    esp_utc_sub_ = this->create_subscription<std_msgs::msg::UInt64MultiArray>(
+        "/sync/utc", rclcpp::QoS(1),
+        [this](const std_msgs::msg::UInt64MultiArray::SharedPtr msg) {
+          if (msg->data.size() != 3) return;
+          const int status = EspSync::Get().SetUtc(msg->data[0], msg->data[1], msg->data[2]);
+          if (status != kStatusSuccess)
+            RCLCPP_ERROR(this->get_logger(), "ESP UTC update rejected: %d", status);
+        });
+    esp_status_timer_ = this->create_wall_timer(std::chrono::milliseconds(200), [this]() {
+      auto &state = EspSync::Get();
+      std_msgs::msg::Bool ready; ready.data = state.Ready(); esp_ready_pub_->publish(ready);
+      std_msgs::msg::UInt64 ack; ack.data = state.ack_epoch; esp_ack_pub_->publish(ack);
+      std_msgs::msg::String status;
+      status.data = "timestamp_type=" + std::to_string(state.last_type.load())
+          + " accepted=" + std::to_string(state.accepted.load())
+          + " rejected=" + std::to_string(state.rejected.load())
+          + " multiple_devices=" + std::to_string(state.multiple.load());
+      esp_status_pub_->publish(status);
+    });
   }
 
   future_ = exit_signal_.get_future();

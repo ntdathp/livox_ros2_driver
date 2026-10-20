@@ -23,6 +23,7 @@
 //
 
 #include "lds_lidar.h"
+#include "esp_sync.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -46,6 +47,8 @@ LdsLidar *g_lds_ldiar = nullptr;
 
 /** Lds lidar function -------------------------------------------------------*/
 LdsLidar::LdsLidar(uint32_t interval_ms) : Lds(interval_ms, kSourceRawLidar) {
+  enable_timesync_ = false;
+  timesync_ = nullptr;
   auto_connect_mode_ = true;
   is_initialized_ = false;
 
@@ -88,6 +91,11 @@ int LdsLidar::InitLdsLidar(std::vector<std::string> &broadcast_code_strs,
   }
 
   ParseConfigFile(user_config_path);
+  if (EspSync::Get().enabled && enable_timesync_) {
+    printf("ESP bridge requires timesync_config.enable_timesync=false\n");
+    Uninit();
+    return -1;
+  }
 
   if (whitelist_count_) {
     DisableAutoConnectMode();
@@ -118,6 +126,9 @@ int LdsLidar::InitLdsLidar(std::vector<std::string> &broadcast_code_strs,
 
     timesync_->StartTimesync();
   }
+
+  // Set callback target before SDK worker threads can run.
+  g_lds_ldiar = this;
 
   /** Start livox sdk to receive lidar data */
   if (!Start()) {
@@ -168,6 +179,8 @@ void LdsLidar::OnLidarDataCb(uint8_t handle, LivoxEthPacket *data,
     return;
   }
 
+  EspSync::Get().Observe(handle, lds_lidar->lidars_[handle].info.type,
+                         eth_packet->timestamp_type);
   lds_lidar->StorageRawPacket(handle, eth_packet);
 }
 
